@@ -1,0 +1,213 @@
+syntax = "proto3";
+
+// This should match the folder structure under src/main/proto,
+// and will drive the Java package of the generated classes.
+package amcds.pb;
+option java_outer_classname = "AmcdsProto";
+option java_multiple_files    = false;
+option java_package = "amcds.pb";
+
+
+// Data structures
+message ProcessId {
+  string host = 1;         // domain or IP
+  int32 port = 2;
+  string owner = 3;        // owner alias
+  int32 index = 4;         // process index
+  int32 rank = 5;          // set by the hub
+}
+
+message Value {
+  bool defined = 1;
+  int32 v       = 2;
+}
+
+// Process lifecycle
+message ProcRegistration {
+  string owner = 1;
+  int32 index  = 2;
+}
+
+message ProcInitializeSystem {
+  repeated ProcessId processes = 1;
+}
+
+message ProcDestroySystem {}
+
+// App‐level messages
+message AppBroadcast { Value value = 1; }
+message AppValue     { Value value = 1; }
+message AppPropose   { string topic = 1; Value value = 2; }
+message AppDecide    { Value value = 1; }
+message AppRead      { string register = 1; }
+message AppWrite     { string register = 1; Value value = 2; }
+message AppReadReturn  { string register = 1; Value value = 2; }
+message AppWriteReturn { string register = 1; }
+
+// Uniform Consensus (UC)
+message UcPropose { Value value = 1; }
+message UcDecide  { Value value = 1; }
+
+// Epoch‐Prom (EP)
+message EpAbort         {}
+message EpAborted       { int32 ets = 1; int32 valueTimestamp = 2; Value value = 3; }
+message EpPropose       { Value value = 1; }
+message EpDecide        { int32 ets = 1; Value value = 2; }
+message EpInternalRead  {}
+message EpInternalState { int32 valueTimestamp = 1; Value value = 2; }
+message EpInternalWrite { Value value = 1; }
+message EpInternalAccept {}
+message EpInternalDecided{ Value value = 1; }
+
+// Epoch Change (EC)
+message EcInternalNack      {}
+message EcStartEpoch        { int32 newTimestamp = 1; ProcessId newLeader = 2; }
+message EcInternalNewEpoch  { int32 timestamp = 1; }
+
+// Best‐Effort Broadcast (BEB)
+message BebBroadcast { Message message = 1; }
+message BebDeliver   { Message message = 1; ProcessId sender = 2; }
+
+// Eventually‐Leader Detector (ELD)
+message EldTimeout {}
+message EldTrust   { ProcessId process = 1; }
+
+// Non‐blocking atomic register (NNAR)
+message NnarRead             {}
+message NnarInternalRead     { int32 readId = 1; }
+message NnarInternalValue    { int32 readId = 1; int32 timestamp = 2; int32 writerRank = 3; Value value = 4; }
+message NnarInternalWrite    { int32 readId = 1; int32 timestamp = 2; int32 writerRank = 3; Value value = 4; }
+message NnarWrite            { Value value = 1; }
+message NnarInternalAck      { int32 readId = 1; }
+message NnarReadReturn       { Value value = 1; }
+message NnarWriteReturn      {}
+
+// Eventually‐perfect failure detector (EPFD)
+message EpfdTimeout                {}
+message EpfdInternalHeartbeatRequest {}
+message EpfdInternalHeartbeatReply   {}
+message EpfdSuspect                { ProcessId process = 1; }
+message EpfdRestore                { ProcessId process = 1; }
+
+// Perfect Links (PL)
+message PlSend    { ProcessId destination = 1; Message message = 2; }
+message PlDeliver { ProcessId sender = 1; Message message = 2; }
+
+// Network wrapper
+message NetworkMessage {
+  string senderHost          = 1;
+  int32  senderListeningPort = 2;
+  Message message            = 3;
+}
+
+// Top‐level wrapper
+message Message {
+  enum Type {
+    NETWORK_MESSAGE           = 0;
+    PROC_REGISTRATION         = 1;
+    PROC_INITIALIZE_SYSTEM    = 2;
+    PROC_DESTROY_SYSTEM       = 3;
+    APP_BROADCAST             = 4;
+    APP_VALUE                 = 5;
+    APP_DECIDE                = 6;
+    APP_PROPOSE               = 7;
+    APP_READ                  = 8;
+    APP_WRITE                 = 9;
+    APP_READ_RETURN           = 10;
+    APP_WRITE_RETURN          = 11;
+    UC_DECIDE                 = 20;
+    UC_PROPOSE                = 21;
+    EP_ABORT                  = 30;
+    EP_ABORTED                = 31;
+    EP_DECIDE                 = 32;
+    EP_INTERNAL_ACCEPT        = 33;
+    EP_INTERNAL_DECIDED       = 34;
+    EP_INTERNAL_READ          = 35;
+    EP_INTERNAL_STATE         = 36;
+    EP_INTERNAL_WRITE         = 37;
+    EP_PROPOSE                = 38;
+    EC_INTERNAL_NACK          = 40;
+    EC_INTERNAL_NEW_EPOCH     = 41;
+    EC_START_EPOCH            = 42;
+    BEB_BROADCAST             = 50;
+    BEB_DELIVER               = 51;
+    ELD_TIMEOUT               = 60;
+    ELD_TRUST                 = 61;
+    NNAR_INTERNAL_ACK         = 70;
+    NNAR_INTERNAL_READ        = 71;
+    NNAR_INTERNAL_VALUE       = 72;
+    NNAR_INTERNAL_WRITE       = 73;
+    NNAR_READ                 = 74;
+    NNAR_READ_RETURN          = 75;
+    NNAR_WRITE                = 76;
+    NNAR_WRITE_RETURN         = 77;
+    EPFD_INTERNAL_HEARTBEAT_REQUEST = 80;
+    EPFD_INTERNAL_HEARTBEAT_REPLY   = 81;
+    EPFD_RESTORE              = 82;
+    EPFD_SUSPECT              = 83;
+    EPFD_TIMEOUT              = 84;
+    PL_DELIVER                = 90;
+    PL_SEND                   = 91;
+  }
+
+  Type             type              = 1;
+  string           messageUuid       = 2;
+  string           FromAbstractionId = 3;
+  string           ToAbstractionId   = 4;
+  string           systemId          = 5;
+
+  NetworkMessage   networkMessage    = 6;
+  ProcRegistration procRegistration   = 7;
+  ProcInitializeSystem procInitializeSystem = 8;
+  ProcDestroySystem procDestroySystem = 9;
+
+  AppBroadcast    appBroadcast     = 10;
+  AppValue        appValue         = 11;
+  AppPropose      appPropose       = 12;
+  AppDecide       appDecide        = 13;
+  AppRead         appRead          = 14;
+  AppWrite        appWrite         = 15;
+  AppReadReturn   appReadReturn    = 16;
+  AppWriteReturn  appWriteReturn   = 17;
+
+  UcDecide       ucDecide       = 20;
+  UcPropose      ucPropose      = 21;
+
+  EpAbort        epAbort        = 30;
+  EpAborted      epAborted      = 31;
+  EpInternalAccept epInternalAccept = 32;
+  EpDecide       epDecide       = 33;
+  EpInternalDecided epInternalDecided = 34;
+  EpPropose      epPropose      = 35;
+  EpInternalRead epInternalRead = 36;
+  EpInternalState epInternalState = 37;
+  EpInternalWrite epInternalWrite = 38;
+
+  EcInternalNack ecInternalNack = 41;
+  EcInternalNewEpoch ecInternalNewEpoch = 42;
+  EcStartEpoch   ecStartEpoch   = 43;
+
+  BebBroadcast   bebBroadcast   = 50;
+  BebDeliver     bebDeliver     = 51;
+
+  EldTimeout     eldTimeout     = 60;
+  EldTrust       eldTrust       = 61;
+
+  NnarInternalAck   nnarInternalAck   = 70;
+  NnarInternalRead  nnarInternalRead  = 71;
+  NnarInternalValue nnarInternalValue = 72;
+  NnarInternalWrite nnarInternalWrite = 73;
+  NnarRead          nnarRead          = 74;
+  NnarReadReturn    nnarReadReturn    = 75;
+  NnarWrite         nnarWrite         = 76;
+  NnarWriteReturn   nnarWriteReturn   = 77;
+
+  EpfdInternalHeartbeatRequest epfdInternalHeartbeatRequest = 80;
+  EpfdInternalHeartbeatReply   epfdInternalHeartbeatReply   = 81;
+  EpfdRestore    epfdRestore    = 82;
+  EpfdSuspect    epfdSuspect    = 83;
+  EpfdTimeout    epfdTimeout    = 84;
+
+  PlDeliver     plDeliver     = 90;
+  PlSend        plSend        = 91;
+}
