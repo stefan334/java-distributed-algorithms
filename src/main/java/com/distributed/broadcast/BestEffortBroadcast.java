@@ -38,6 +38,7 @@ public class BestEffortBroadcast implements Abstraction {
                     msgToSend = Message.newBuilder()
                             .setType(Message.Type.PL_SEND)
                             .setFromAbstractionId(id)
+                            .setSystemId(m.getSystemId())
                             .setToAbstractionId(id + ".pl")
                             .setPlSend(
                                     PlSend.newBuilder()
@@ -60,6 +61,7 @@ public class BestEffortBroadcast implements Abstraction {
                         .setFromAbstractionId(id)
                         .setToAbstractionId(m.getPlDeliver().getMessage().getToAbstractionId())
                         .setBebDeliver(deliver)
+                        .setSystemId(m.getSystemId())
                         .build();
                 msgQueue.offer(msgToSend);
                 break;

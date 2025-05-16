@@ -1,21 +1,19 @@
 package com.distributed.pl;
 
 import amcds.pb.AmcdsProto.*;
-
 import com.distributed.tcp.Tcp;
 import com.distributed.utils.Abstraction;
 import com.distributed.utils.Utils;
 import com.distributed.utils.Log;
-import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.InvalidProtocolBufferException;
-
-
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 
 /**
  * PerfectLink abstraction: wraps raw network messages into PL_DELIVER,
  * and sends PL_SEND as NETWORK_MESSAGE via a hub or direct host:port.
+ * Now includes systemId and messageUuid metadata and manual big-endian length prefix.
  */
 public class PerfectLink implements Abstraction {
     private final String host;
@@ -28,8 +26,8 @@ public class PerfectLink implements Abstraction {
     private List<ProcessId> processes;
 
     private PerfectLink(String host, int port, String hubAddress) {
-        this.host       = host;
-        this.port       = port;
+        this.host = host;
+        this.port = port;
         this.hubAddress = hubAddress;
     }
 
@@ -37,113 +35,88 @@ public class PerfectLink implements Abstraction {
         return new PerfectLink(host, port, hubAddress);
     }
 
-
     public PerfectLink createWithProps(String systemId,
                                        BlockingQueue<Message> msgQueue,
                                        List<ProcessId> processes) {
-        this.systemId  = systemId;
-        this.msgQueue  = msgQueue;
+        this.systemId = systemId;
+        this.msgQueue = msgQueue;
         this.processes = processes;
         return this;
     }
 
-    /**
-     * Copy this PL with a new parent abstraction id.
-     * @param parentAbstraction the abstraction above PL
-     * @return a shallow copy with parentId set
-     */
     public PerfectLink createCopyWithParentId(String parentAbstraction) {
-        PerfectLink copy = new PerfectLink(this.host, this.port, this.hubAddress);
-        copy.systemId   = this.systemId;
-        copy.msgQueue   = this.msgQueue;
-        copy.processes  = this.processes;
-        copy.parentId   = parentAbstraction;
+        PerfectLink copy = new PerfectLink(host, port, hubAddress);
+        copy.systemId = this.systemId;
+        copy.msgQueue = this.msgQueue;
+        copy.processes = this.processes;
+        copy.parentId = parentAbstraction;
         return copy;
     }
 
-    /**
-     * Handle an incoming Message from the BUS or upper layer.
-     * Transforms NETWORK_MESSAGE → PL_DELIVER, or calls send() for PL_SEND.
-     */
     @Override
     public void handle(Message m) throws Exception {
         switch (m.getType()) {
             case NETWORK_MESSAGE:
-                NetworkMessage net = m.getNetworkMessage();
-
+                // locate sender by matching host+port
                 ProcessId sender = null;
                 for (ProcessId p : processes) {
-                    if (p.getHost().equals(net.getSenderHost())
-                            && p.getPort() == net.getSenderListeningPort()) {
+                    if (p.getHost().equals(m.getNetworkMessage().getSenderHost())
+                            && p.getPort() == m.getNetworkMessage().getSenderListeningPort()) {
                         sender = p;
                         break;
                     }
                 }
-
+                // build PL_DELIVER with optional sender
                 PlDeliver.Builder pdBuilder = PlDeliver.newBuilder()
-                        .setMessage(net.getMessage());
+                        .setMessage(m.getNetworkMessage().getMessage());
                 if (sender != null) {
                     pdBuilder.setSender(sender);
                 } else {
-                    Log.debug("PL: unknown sender {}:{}",
-                            net.getSenderHost(), net.getSenderListeningPort());
+                    Log.debug("PL_DELIVER received from unknown sender {}:{}",
+                            m.getNetworkMessage().getSenderHost(), m.getNetworkMessage().getSenderListeningPort());
                 }
-
                 Message deliver = Message.newBuilder()
+                        .setType(Message.Type.PL_DELIVER)
                         .setSystemId(m.getSystemId())
                         .setFromAbstractionId(m.getToAbstractionId())
                         .setToAbstractionId(parentId)
-                        .setType(Message.Type.PL_DELIVER)
                         .setPlDeliver(pdBuilder.build())
                         .build();
-
                 msgQueue.offer(deliver);
                 break;
-
 
             case PL_SEND:
                 send(m);
                 break;
 
             default:
-                throw new UnsupportedOperationException("message not supported");
+                throw new UnsupportedOperationException("message not supported: " + m.getType());
         }
     }
 
-    /**
-     * Sends a PL_SEND message as a NETWORK_MESSAGE over TCP.
-     */
-    public void send(Message m) throws Exception {
-        Log.debug("PLSEND %s", m);
-
-        NetworkMessage.Builder nm = NetworkMessage.newBuilder()
-                .setMessage(m.getPlSend().getMessage())
-                .setSenderHost(host)
-                .setSenderListeningPort(port);
-
-        Message msgToSend = Message.newBuilder()
-                .setSystemId(systemId)
-                .setToAbstractionId(m.getToAbstractionId())
+    private void send(Message m) throws Exception {
+        Message networkMsg = Message.newBuilder()
                 .setType(Message.Type.NETWORK_MESSAGE)
-                .setNetworkMessage(nm.build())
+                .setSystemId(systemId)
+                .setFromAbstractionId(parentId + ".pl")
+                .setToAbstractionId(m.getToAbstractionId())
+                .setMessageUuid(UUID.randomUUID().toString())
+                .setNetworkMessage(NetworkMessage.newBuilder()
+                        .setMessage(m.getPlSend().getMessage())
+                        .setSenderHost(host)
+                        .setSenderListeningPort(port)
+                        .build())
                 .build();
-        int size = msgToSend.getSerializedSize();
-        byte[] data = new byte[size];
-        CodedOutputStream cos = CodedOutputStream.newInstance(data);
-        msgToSend.writeTo(cos);
-        cos.checkNoSpaceLeft();
 
-
+        byte[] payload = networkMsg.toByteArray();
 
         String address = hubAddress;
         if (m.getPlSend().hasDestination()) {
             ProcessId dest = m.getPlSend().getDestination();
             address = Utils.joinHostPort(dest.getHost(), dest.getPort());
         }
-
-        Tcp.send(address, data);
+        Tcp.send(address, payload);
     }
-
 
     public Message parse(byte[] data) throws InvalidProtocolBufferException {
         Message msg = Message.parseFrom(data);
@@ -151,6 +124,5 @@ public class PerfectLink implements Abstraction {
         return msg;
     }
 
-    public void destroy() {
-    }
+    public void destroy() {}
 }

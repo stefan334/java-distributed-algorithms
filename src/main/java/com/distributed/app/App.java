@@ -26,6 +26,42 @@ public class App implements Abstraction {
                 PlDeliver plDeliver = m.getPlDeliver();
                 Message inner = plDeliver.getMessage();
                 switch (inner.getType()) {
+                    case APP_PROPOSE:
+                        msgToSend = Message.newBuilder()
+                                .setType(Type.UC_PROPOSE)
+                                .setFromAbstractionId("app")
+                                .setToAbstractionId("app.uc[" + inner.getAppPropose().getTopic() + "]")
+                                .setUcPropose(
+                                        UcPropose.newBuilder()
+                                                .setValue(inner.getAppPropose().getValue())
+                                                .build()
+                                )
+                                .build();
+                        break;
+                    case UC_DECIDE:
+                        UcDecide dec = m.getUcDecide();
+                        Message innerDec = Message.newBuilder()
+                                .setType(Type.APP_DECIDE)
+                                .setFromAbstractionId("app")
+                                .setToAbstractionId("app")
+                                .setAppDecide(
+                                        AppDecide.newBuilder()
+                                                .setValue(dec.getValue())
+                                                .build()
+                                )
+                                .build();
+
+                        msgToSend = Message.newBuilder()
+                                .setType(Type.PL_SEND)
+                                .setFromAbstractionId("app")
+                                .setToAbstractionId("app.pl")
+                                .setPlSend(
+                                        PlSend.newBuilder()
+                                                .setMessage(innerDec)
+                                                .build()
+                                )
+                                .build();
+                        break;
                     case APP_BROADCAST:
                         msgToSend = Message.newBuilder()
                                 .setType(Type.BEB_BROADCAST)
@@ -90,7 +126,30 @@ public class App implements Abstraction {
                         throw new UnsupportedOperationException("message not supported");
                 }
                 break;
+            case UC_DECIDE:
+                UcDecide dec = m.getUcDecide();
+                Message innerDec = Message.newBuilder()
+                        .setType(Type.APP_DECIDE)
+                        .setFromAbstractionId("app")
+                        .setToAbstractionId("app")
+                        .setAppDecide(
+                                AppDecide.newBuilder()
+                                        .setValue(dec.getValue())
+                                        .build()
+                        )
+                        .build();
 
+                msgToSend = Message.newBuilder()
+                        .setType(Type.PL_SEND)
+                        .setFromAbstractionId("app")
+                        .setToAbstractionId("app.pl")
+                        .setPlSend(
+                                PlSend.newBuilder()
+                                        .setMessage(innerDec)
+                                        .build()
+                        )
+                        .build();
+                break;
             case BEB_DELIVER:
                 BebDeliver bebDeliver = m.getBebDeliver();
                 msgToSend = Message.newBuilder()

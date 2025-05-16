@@ -1,16 +1,14 @@
 package com.distributed.system;
 
-
 import amcds.pb.AmcdsProto.*;
-
-
-
 import com.distributed.app.App;
 import com.distributed.broadcast.BestEffortBroadcast;
 import com.distributed.nnar.NnAtomicRegister;
 import com.distributed.pl.PerfectLink;
-
-
+import consensus.Uc;
+import consensus.Ec;
+import consensus.Eld;
+import consensus.Epfd;
 import com.distributed.utils.Utils;
 import com.distributed.utils.Log;
 import com.distributed.utils.Abstraction;
@@ -54,10 +52,7 @@ public class DistributedSystem {
             int port,
             int index) {
 
-        ProcInitializeSystem init = wrapper
-                       .getNetworkMessage()
-                       .getMessage()
-                        .getProcInitializeSystem();
+        ProcInitializeSystem init = wrapper.getNetworkMessage().getMessage().getProcInitializeSystem();
         List<ProcessId> procs = init.getProcessesList();
 
         ProcessId me = procs.stream()
@@ -81,8 +76,6 @@ public class DistributedSystem {
         return sys;
     }
 
-
-
     /** Start the background event‐loop thread. */
     public void startEventLoop() {
         eventLoopThread = new Thread(this::runLoop, "System-EventLoop");
@@ -95,12 +88,18 @@ public class DistributedSystem {
             Message m = null;
             try {
                 m = msgQueue.take();
-
                 to = m.getToAbstractionId();
-                if (!abstractions.containsKey(to) && to.startsWith("app.nnar[")) {
-                    String key = Utils.getRegisterId(to);
-                    Log.info("Creating new nnar abstraction for {}", to);
-                    registerNnarAbstractions(key);
+
+                if (!abstractions.containsKey(to)) {
+                    if (to.startsWith("app.nnar[")) {
+                        Log.info("Creating new nnar abstraction for {}", to);
+                        registerNnarAbstractions(Utils.getRegisterId(to));
+                    }
+                    if (to.startsWith("app.uc[")) {
+                        String topic = Utils.getRegisterId(to);
+                        Log.info("Creating new consensus abstraction for {}", to);
+                        registerConsensusAbstractions(topic);
+                    }
                 }
 
                 Abstraction handler = abstractions.get(to);
@@ -116,7 +115,8 @@ public class DistributedSystem {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception ex) {
-                Log.error("Error in event loop for [{}] handling {}: {}", to, m.getType(), ex.getMessage(), ex);
+                Log.error("Error in event loop for [{}] handling {}: {}",
+                        to, m.getType(), ex.getMessage(), ex);
             }
         }
     }
@@ -134,12 +134,8 @@ public class DistributedSystem {
         );
 
         abstractions.put("app", new App(msgQueue));
-
         abstractions.put("app.pl", pl.createCopyWithParentId("app"));
-
-        abstractions.put("app.beb",
-                new BestEffortBroadcast(msgQueue, processes, "app.beb"));
-
+        abstractions.put("app.beb", new BestEffortBroadcast(msgQueue, processes, "app.beb"));
         abstractions.put("app.beb.pl", pl.createCopyWithParentId("app.beb"));
     }
 
@@ -158,31 +154,48 @@ public class DistributedSystem {
         );
 
         abstractions.put(aId, new NnAtomicRegister(msgQueue, processes.size(), key));
-
         abstractions.put(aId + ".pl", pl.createCopyWithParentId(aId));
-
-        abstractions.put(aId + ".beb",
-                new BestEffortBroadcast(msgQueue, processes, aId + ".beb"));
-
+        abstractions.put(aId + ".beb", new BestEffortBroadcast(msgQueue, processes, aId + ".beb"));
         abstractions.put(aId + ".beb.pl", pl.createCopyWithParentId(aId + ".beb"));
     }
 
+    /** Dynamically instantiate UC + EC + ELD + EPFD layers on UC_PROPOSE. */
+    private void registerConsensusAbstractions(String topic) {
+        String aId = "app.uc[" + topic + "]";
+
+        PerfectLink pl = PerfectLink.create(
+                ownProcess.getHost(),
+                ownProcess.getPort(),
+                hubAddress
+        ).createWithProps(
+                systemId,
+                msgQueue,
+                processes
+        );
+
+        abstractions.put(aId, new Uc(aId, msgQueue, abstractions, processes, ownProcess, pl));
+
+        abstractions.put(aId + ".ec", new Ec(aId, aId + ".ec", ownProcess, msgQueue, processes));
+        abstractions.put(aId + ".ec.pl", pl.createCopyWithParentId(aId + ".ec"));
+        abstractions.put(aId + ".ec.beb", new BestEffortBroadcast(msgQueue, processes, aId + ".ec.beb"));
+        abstractions.put(aId + ".ec.beb.pl", pl.createCopyWithParentId(aId + ".ec.beb"));
+
+        abstractions.put(aId + ".ec.eld", new Eld(aId + ".ec", aId + ".ec.eld", msgQueue, processes));
+
+        abstractions.put(aId + ".ec.eld.epfd", new Epfd(aId + ".ec.eld", aId + ".ec.eld.epfd", msgQueue, processes));
+        abstractions.put(aId + ".ec.eld.epfd.pl", pl.createCopyWithParentId(aId + ".ec.eld.epfd"));
+    }
+
     public void addMessage(Message m) {
-        Log.debug("Received message for %s with type %s", m.getToAbstractionId(), m.getType());
+        Log.debug("Received message for {} with type {}", m.getToAbstractionId(), m.getType());
         msgQueue.offer(m);
     }
 
     /** Shutdown all abstractions and stop the event loop. */
     public void destroy() {
-        Log.info("{}-{}: Stopping ...",
-                ownProcess.getOwner(),
-                ownProcess.getIndex());
-
+        Log.info("{}-{}: Stopping ...", ownProcess.getOwner(), ownProcess.getIndex());
         running = false;
-        if (eventLoopThread != null) {
-            eventLoopThread.interrupt();
-        }
-
+        if (eventLoopThread != null) eventLoopThread.interrupt();
         abstractions.values().forEach(Abstraction::destroy);
     }
 }
